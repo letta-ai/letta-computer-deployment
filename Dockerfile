@@ -1,4 +1,4 @@
-ARG LETTA_CODE_IMAGE=ghcr.io/letta-ai/letta-code:latest
+ARG LETTA_CODE_IMAGE=ghcr.io/letta-ai/letta-code:0.30.29
 FROM ${LETTA_CODE_IMAGE}
 
 COPY --chmod=755 start-computer.sh /usr/local/bin/start-letta-computer

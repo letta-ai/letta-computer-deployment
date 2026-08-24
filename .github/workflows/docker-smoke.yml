@@ -20,6 +20,54 @@ jobs:
       - name: Check entrypoint syntax
         run: sh -n start-computer.sh
 
+      - name: Test stale listener lock recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test_root="$(mktemp -d)"
+          trap 'rm -rf "$test_root"' EXIT
+          mkdir -p "$test_root/home/.letta/listeners" "$test_root/bin"
+
+          printf '%s' \
+            '{"version":1,"pid":1,"ownerToken":"old","acquiredAt":"2026-08-17T00:00:00Z","scopeHash":"abc"}' \
+            > "$test_root/home/.letta/listeners/manual-stale.lock"
+          printf '%s' \
+            '{"version":1,"pid":2,"ownerToken":"other","acquiredAt":"2026-08-24T00:00:00Z","scopeHash":"def"}' \
+            > "$test_root/home/.letta/listeners/manual-other-pid.lock"
+
+          cat > "$test_root/bin/letta" <<'EOF'
+          #!/bin/sh
+          case "$1 $2" in
+            "channels status")
+              printf '%s\n' '{"slack":{"enabled":true,"runtimeInstalled":false}}'
+              ;;
+            "channels install")
+              printf '%s\n' "$3" > "$TEST_INSTALLED_CHANNEL"
+              ;;
+            "server --env-name")
+              printf '%s\n' "$@" > "$TEST_ARGS"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          EOF
+          chmod +x "$test_root/bin/letta"
+
+          HOME="$test_root/home" \
+            PATH="$test_root/bin:$PATH" \
+            TEST_ARGS="$test_root/args" \
+            TEST_INSTALLED_CHANNEL="$test_root/installed-channel" \
+            ENV_NAME=smoke \
+            sh ./start-computer.sh
+
+          test ! -e "$test_root/home/.letta/listeners/manual-stale.lock"
+          test -e "$test_root/home/.letta/listeners/manual-other-pid.lock"
+          test "$(cat "$test_root/installed-channel")" = "slack"
+          printf '%s\n' server --env-name smoke --debug > "$test_root/expected"
+          diff -u "$test_root/expected" "$test_root/args"
+
       - name: Build deployment image
         run: docker build --tag letta-computer:smoke .
 

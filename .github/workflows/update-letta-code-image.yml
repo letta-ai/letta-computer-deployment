@@ -1,0 +1,62 @@
+name: Update Letta Code image
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Turn releases into Git commits so services connected to this repository
+    # rebuild instead of remaining on the image resolved by an old deployment.
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check latest published image
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          latest="$(npm view @letta-ai/letta-code version)"
+          current="$(sed -nE 's|^ARG LETTA_CODE_IMAGE=ghcr.io/letta-ai/letta-code:([^[:space:]]+)$|\1|p' Dockerfile)"
+
+          test -n "$current"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+
+          if [[ "$latest" == "$current" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # npm can become visible shortly before the multi-architecture image.
+          # Leave the repository unchanged and let the next hourly run retry.
+          if ! docker manifest inspect "ghcr.io/letta-ai/letta-code:${latest}" >/dev/null 2>&1; then
+            echo "Container image ${latest} is not published yet; retrying next run."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sed -i -E \
+            "s|^ARG LETTA_CODE_IMAGE=ghcr.io/letta-ai/letta-code:[^[:space:]]+$|ARG LETTA_CODE_IMAGE=ghcr.io/letta-ai/letta-code:${latest}|" \
+            Dockerfile
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit image update
+        if: steps.version.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add Dockerfile
+          git commit -m "chore: bump letta-code image to v${{ steps.version.outputs.latest }}"
+          git push

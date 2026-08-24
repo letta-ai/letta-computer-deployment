@@ -24,9 +24,17 @@ No inbound port, reverse proxy, or domain is required.
 - `LETTA_BASE_URL` points the computer at another Letta API deployment.
 - `LETTA_SYSTEM_CRON_DIR` and `LETTA_SYSTEM_ROOT_CRONTAB` restore Unix cron files from persistent storage on boot. Their defaults are under `/root/.letta`.
 
+Startup checks channel status and installs optional runtimes required by enabled
+channels before restoring them. This keeps persisted Slack, Telegram, Discord,
+and WhatsApp accounts usable after the base image is replaced.
+
 Files stored directly in `/etc/cron.d` disappear when a container is replaced. Put persistent definitions under `/root/.letta/system-cron`, and put an optional root crontab at `/root/.letta/system-crontab/root`.
 
-The Dockerfile uses `ghcr.io/letta-ai/letta-code:latest`. Pin a release when reproducible builds matter:
+The Dockerfile pins a released `ghcr.io/letta-ai/letta-code` image. An hourly
+GitHub workflow updates that pin after the matching npm and container releases
+are both available, producing a commit that connected platforms can deploy.
+
+To override the release for a one-off build:
 
 ```bash
 docker build \
@@ -35,3 +43,13 @@ docker build \
 ```
 
 See [Bring Your Own Machine](https://docs.letta.com/platform/computers/byom) for provider-specific deployment instructions, authentication, and verification.
+
+## Container restarts
+
+The startup script clears standalone-listener lock files before launching.
+Those locks are runtime ownership records, not user state; retaining them on a
+persistent volume can otherwise block a replacement container when its PID is
+reused. Railway is configured with an always-restart policy so a transient
+failure does not exhaust a finite retry budget and leave the computer offline.
+Deployment overlap is disabled because two generations must not share one
+computer identity or its persistent volume concurrently.
